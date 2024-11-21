@@ -1,0 +1,115 @@
+#include <WiFi.h>
+#include <ThingSpeak.h>
+#include <Wire.h>
+
+// Definición de pines para los sensores
+const int pinTMP36 = 34;     // Ejemplo, usa el pin A0 para el TMP36
+const int pinFlujo = 32;     // Pin digital para el sensor de flujo
+const int pinTurbidez = 33;  // Pin analógico para el sensor de turbidez
+
+// Variables para almacenar los valores de los sensores
+float temperatura;
+float flujo;
+int turbidez;
+
+// Variables para el sensor de flujo
+volatile int cuentaFlujo = 0;
+float tasaFlujo = 0.0;
+
+// Configuración Wi-Fi y ThingSpeak
+const char* ssid = "Santiago";           // Cambia por el nombre de tu red Wi-Fi
+const char* password = "12345678";       // Cambia por la contraseña de tu red Wi-Fi
+
+unsigned long myChannelNumber = 2688481;  // Tu número de canal en ThingSpeak
+const char* myWriteAPIKey = "B0RS8JTNNLS3SSOK";  // Tu API Key de escritura en ThingSpeak
+
+WiFiClient client;  // Crear un cliente WiFi
+
+// Función para configurar la conexión Wi-Fi
+void setup_wifi() {
+  delay(10);
+  Serial.println();
+  Serial.print("Conectando a ");
+  Serial.println(ssid);
+
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("");
+  Serial.println("WiFi conectado");
+  Serial.print("IP asignada: ");
+  Serial.println(WiFi.localIP());
+}
+
+// Interrupción para contar los pulsos del sensor de flujo
+void IRAM_ATTR cuentaPulsos() {
+  cuentaFlujo++;
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  // Configurar pines
+  pinMode(pinTMP36, INPUT);
+  pinMode(pinFlujo, INPUT_PULLUP);  // Configurar el pin de flujo como entrada con resistencia pull-up
+  pinMode(pinTurbidez, INPUT);
+
+  // Configurar interrupción para el sensor de flujo
+  attachInterrupt(digitalPinToInterrupt(pinFlujo), cuentaPulsos, RISING);
+
+  // Conectar a WiFi
+  setup_wifi();
+
+  // Configuración de ThingSpeak
+  ThingSpeak.begin(client);
+}
+
+void loop() {
+  // Leer y procesar el sensor TMP36 (temperatura)
+  int lecturaTMP36 = analogRead(pinTMP36);
+  temperatura = (lecturaTMP36 * 3.3 / 4095.0 - 0.5) * 100.0;  // Convertir a grados Celsius
+
+  // Leer y procesar el sensor de turbidez
+  turbidez = analogRead(pinTurbidez);
+
+  // Leer el sensor de flujo
+  noInterrupts();               // Deshabilitar interrupciones mientras leemos
+  int pulsos = cuentaFlujo;      // Guardar el valor de los pulsos
+  cuentaFlujo = 0;               // Reiniciar el contador
+  interrupts();                  // Habilitar interrupciones nuevamente
+
+  // Calcular el flujo en litros por minuto (ajustar según las especificaciones del sensor)
+  tasaFlujo = pulsos / 7.5;
+
+  // Mostrar resultados en el monitor serial
+  Serial.print("Temperatura: ");
+  Serial.print(temperatura);
+  Serial.println(" °C");
+
+  Serial.print("Tasa de flujo: ");
+  Serial.print(tasaFlujo);
+  Serial.println(" L/min");
+
+  Serial.print("Turbidez: ");
+  Serial.println(turbidez);
+
+  // Enviar los datos a ThingSpeak
+  ThingSpeak.setField(1, temperatura);  // Campo 1: Temperatura
+  ThingSpeak.setField(2, tasaFlujo);    // Campo 2: Flujo
+  ThingSpeak.setField(3, turbidez);     // Campo 3: Turbidez
+
+  int x = ThingSpeak.writeFields(myChannelNumber, myWriteAPIKey);  // Enviar datos
+
+  if (x == 200) {
+    Serial.println("Datos enviados correctamente a ThingSpeak.");
+  } else {
+    Serial.println("Error al enviar los datos. Código de error: " + String(x));
+  }
+
+  // Esperar 15 segundos antes del próximo envío
+  delay(15000);
+}
